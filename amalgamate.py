@@ -19,17 +19,16 @@ def get_config_settings():
         'archive_path': getcwd() + '/ARCHIVE'
     }
 
-    s = open("siemens_importer.config", 'r')
+    s = open("amalgamate.config", 'r')
     for _line in s:
         # ignore comments
         if _line[0] == '#' or len(_line) == 1:
             pass
         elif "=" in _line:
             _x = _line.split("=")
-            if _x[1][0] == "\"":
-                _config[_x[0]] = _x[1][1:-2]
-            else:
-                _config[_x[0]] = _x[1]
+            _config[_x[0]] = _x[1]
+            if _config[_x[0]][-1] == "\n":
+                _config[_x[0]] = _config[_x[0]][:-1]
         else:
             pass
     return _config
@@ -38,6 +37,8 @@ config = get_config_settings()  # Generate configuration settings dict
 
 source_directory = config['source_files_path']
 archive_directory = config['archive_path']
+
+output_file = config['archive_path'] + '/' + 'output.csv'
 
 
 class Folder:
@@ -77,9 +78,6 @@ class Folder:
 
 
 # GLOBAL FUNCTIONS
-header = ['Time', 'Label', 'value']
-
-
 # checks for number-ness
 def is_number(s):
     try:
@@ -117,15 +115,17 @@ def siemens_value(raw_value, measure='Unknown Measurement'):
 # BEGIN - Collecting files and process them
 print colored('Beginning Import\n', 'green')
 
+header = ['Time', 'Label', 'value']  # for CSV
+
 folder = Folder()
 if folder.selective_suffix():
     print 'Found ' + colored(len(folder.selective_suffix()), 'blue') + ' files for import.'
     for _file in folder.selective_suffix():
         # load file
         a = []  # this holds the files data
-        f = open(source_directory + '/' + _file, 'r')
-        for line in f:
-            a.append(line)
+        with open(source_directory + '/' + _file, 'r') as f:
+            for line in f:
+                a.append(line)
         f.close()
 
         # list comprehension for cleaning the file
@@ -133,33 +133,40 @@ if folder.selective_suffix():
         label = ''  # active variable
         location = ''  # active location
 
-        # Generate JSON strings from each line measurements
-        for index, l in enumerate(clean_file):
-            # IF new variable: update the label variable and location
-            if len(l) > 0 and l.split()[0] == "Point":
-                tags = l.split()[2].split(".")
-                location = tags[0]
-                label = ''.join(tags[1:])
-            # IF data line is found... create JSON
-            if len(l) == 54:
-                # SPLIT input string
-                y = l.split()
-                value = siemens_value(y[2], label)  # modify the value to the correct type
+        with open(output_file, 'a') as csv_to_write:
+            # Create CSV writing object
+            writer = csv.writer(csv_to_write, delimiter=",")
+            writer.writerow(header)
 
-                # data and time
-                d = y[0].split('/')
-                d = map(int, d)
-                t = y[1].split(":")
-                t = map(int, t)
-                loc_dt = eastern.localize(datetime(d[2], d[0], d[1], t[0], t[1], t[2]))
+            # Generate csv rows from each line measurements
+            for index, l in enumerate(clean_file):
+                # IF new variable: update the label variable and location
+                if len(l) > 0 and l.split()[0] == "Point":
+                    tags = l.split()[2].split(".")
+                    location = tags[0]
+                    label = ''.join(tags[1:])
+                # IF data line is found... create JSON
+                if len(l) == 54:
+                    # SPLIT input string
+                    y = l.split()
+                    value = siemens_value(y[2], label)  # modify the value to the correct type
 
-                # Write row to CSV
-                _row = [loc_dt, label, value]
+                    # data and time
+                    d = y[0].split('/')
+                    d = map(int, d)
+                    t = y[1].split(":")
+                    t = map(int, t)
+                    loc_dt = eastern.localize(datetime(d[2], d[0], d[1], t[0], t[1], t[2]))
 
-            if index % 10 == 0:
-                print "\r.",
-            else:
-                print ".",
+                    # Write row to CSV
+                    _row = [loc_dt, label, value]
+                    writer.writerow(_row)
+
+                # a little something to mark progress
+                if index % 10 == 0:
+                    print "\r.",
+                else:
+                    print ".",
 
         print colored("\rImported: ", 'red') + _file,
         if not path.exists(archive_directory + '/ARCHIVE'):
@@ -170,4 +177,3 @@ if folder.selective_suffix():
     print '\nAll files successfully imported!'
 else:
     print colored('WARNING', 'yellow') + ' no files to import'
-
